@@ -1,4 +1,4 @@
-#!/usr/bin/python2.7
+#!/usr/bin/env python3
 # Compresses the core Blockly files into a single JavaScript file.
 #
 # Copyright 2012 Google Inc.
@@ -35,11 +35,11 @@
 #   msg/js/<LANG>.js for every language <LANG> defined in msg/js/<LANG>.json.
 
 import sys
-if sys.version_info[0] != 2:
-  raise Exception("Blockly build only compatible with Python 2.x.\n"
+if sys.version_info[0] != 3:
+  raise Exception("Blockly build only compatible with Python 3.x.\n"
                   "You are using: " + sys.version)
 
-import errno, glob, httplib, json, os, re, subprocess, threading, urllib
+import errno, functools, glob, http.client, importlib, json, os, re, subprocess, threading, urllib.parse
 
 REMOTE_COMPILER = "remote"
 
@@ -67,7 +67,7 @@ def import_path(fullpath):
   filename, ext = os.path.splitext(filename)
   sys.path.append(path)
   module = __import__(filename)
-  reload(module)  # Might be out of date.
+  importlib.reload(module)  # Might be out of date.
   del sys.path[-1]
   return module
 
@@ -194,7 +194,7 @@ if (isNodeJS) {
 
     key_whitelist = self.closure_env.keys()
 
-    keys_pipe_separated = reduce(lambda accum, key: accum + "|" + key, key_whitelist)
+    keys_pipe_separated = functools.reduce(lambda accum, key: accum + "|" + key, key_whitelist)
     begin_brace = re.compile(r"\{(?!%s)" % (keys_pipe_separated,))
 
     end_brace = re.compile(r"\}")
@@ -330,13 +330,14 @@ class Gen_compressed(threading.Thread):
 
       proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
       (stdout, stderr) = proc.communicate()
+      stdout_text = stdout.decode("utf-8")
 
       # Build the JSON response.
       filesizes = [os.path.getsize(value) for (arg, value) in params if arg == "js_file"]
       return dict(
-        compiledCode=stdout,
+        compiledCode=stdout_text,
         statistics=dict(
-          originalSize=reduce(lambda v, size: v + size, filesizes, 0),
+          originalSize=functools.reduce(lambda v, size: v + size, filesizes, 0),
           compressedSize=len(stdout),
         )
       )
@@ -372,8 +373,8 @@ class Gen_compressed(threading.Thread):
             remoteParams.append((arg, value))
 
       headers = {"Content-type": "application/x-www-form-urlencoded"}
-      conn = httplib.HTTPSConnection("closure-compiler.appspot.com")
-      conn.request("POST", "/compile", urllib.urlencode(remoteParams), headers)
+      conn = http.client.HTTPSConnection("closure-compiler.appspot.com")
+      conn.request("POST", "/compile", urllib.parse.urlencode(remoteParams), headers)
       response = conn.getresponse()
       json_str = response.read()
       conn.close()
@@ -388,12 +389,12 @@ class Gen_compressed(threading.Thread):
       n = int(name[6:]) - 1
       return filenames[n]
 
-    if json_data.has_key("serverErrors"):
+    if "serverErrors" in json_data:
       errors = json_data["serverErrors"]
       for error in errors:
         print("SERVER ERROR: %s" % target_filename)
         print(error["error"])
-    elif json_data.has_key("errors"):
+    elif "errors" in json_data:
       errors = json_data["errors"]
       for error in errors:
         print("FATAL ERROR")
@@ -405,7 +406,7 @@ class Gen_compressed(threading.Thread):
           print((" " * error["charno"]) + "^")
         sys.exit(1)
     else:
-      if json_data.has_key("warnings"):
+      if "warnings" in json_data:
         warnings = json_data["warnings"]
         for warning in warnings:
           print("WARNING")
@@ -422,7 +423,7 @@ class Gen_compressed(threading.Thread):
     return False
 
   def write_output(self, target_filename, remove, json_data):
-      if not json_data.has_key("compiledCode"):
+      if "compiledCode" not in json_data:
         print("FATAL ERROR: Compiler did not return compiledCode.")
         sys.exit(1)
 
@@ -500,7 +501,7 @@ class Gen_langfiles(threading.Thread):
           # If a destination file was missing, rebuild.
           return True
       else:
-        print("Error checking file creation times: " + e)
+        print("Error checking file creation times: " + str(e))
 
   def run(self):
     # The files msg/json/{en,qqq,synonyms}.json depend on msg/messages.js.
@@ -509,7 +510,7 @@ class Gen_langfiles(threading.Thread):
                       ["en.json", "qqq.json", "synonyms.json"]]):
       try:
         subprocess.check_call([
-            "python",
+            sys.executable,
             os.path.join("i18n", "js_to_json.py"),
             "--input_file", "msg/messages.js",
             "--output_dir", "msg/json/",
@@ -526,7 +527,7 @@ class Gen_langfiles(threading.Thread):
     try:
       # Use create_messages.py to create .js files from .json files.
       cmd = [
-          "python",
+          sys.executable,
           os.path.join("i18n", "create_messages.py"),
           "--source_lang_file", os.path.join("msg", "json", "en.json"),
           "--source_synonym_file", os.path.join("msg", "json", "synonyms.json"),
@@ -573,7 +574,7 @@ if __name__ == "__main__":
     test_args = [closure_compiler, os.path.join("build", "test_input.js")]
     test_proc = subprocess.Popen(test_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     (stdout, _) = test_proc.communicate()
-    assert stdout == read(os.path.join("build", "test_expect.js"))
+    assert stdout.decode("utf-8") == read(os.path.join("build", "test_expect.js"))
 
     print("Using local compiler: google-closure-compiler ...\n")
   except (ImportError, AssertionError):
@@ -602,11 +603,11 @@ if __name__ == "__main__":
   developers.google.com/blockly/guides/modify/web/closure""")
       sys.exit(1)
 
-  search_paths = calcdeps.ExpandDirectories(
-      ["core", os.path.join(closure_root, closure_library)])
+  search_paths = list(calcdeps.ExpandDirectories(
+      ["core", os.path.join(closure_root, closure_library)]))
 
-  search_paths_horizontal = filter(exclude_vertical, search_paths)
-  search_paths_vertical = filter(exclude_horizontal, search_paths)
+  search_paths_horizontal = list(filter(exclude_vertical, search_paths))
+  search_paths_vertical = list(filter(exclude_horizontal, search_paths))
 
   closure_env = {
     "closure_dir": closure_dir,
